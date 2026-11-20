@@ -57,6 +57,24 @@ Por ejemplo, guardar el archivo como `storage/app/private/merida-source/merida.o
 php -d memory_limit=512M artisan mapa:importar storage/app/private/merida-source/merida.osm.json --boundary=5961522
 ```
 
+### Si falla el proveedor: archivo y comando en Windows
+
+El importador necesita **JSON original de Overpass**, con un objeto raíz que contenga `elements` y los elementos OSM `node`, `way` y `relation`, incluida la relación municipal **5961522** y todas sus referencias. La consulta anterior obtiene ese formato. No admite XML `.osm`, PBF, una colección GeoJSON ni HTML de error; cambiar la extensión de un archivo no convierte su contenido. Tampoco admite resultados parciales con `remark` de error.
+
+Desde PowerShell, situado en la raíz del proyecto, preparar el directorio:
+
+```powershell
+New-Item -ItemType Directory -Force '.\storage\app\private\merida-source' | Out-Null
+```
+
+Guardar allí la respuesta completa como `merida.osm.json`. En este workspace la ubicación es `C:\Users\Administrador\Documents\parques-merida\storage\app\private\merida-source\merida.osm.json`. Después ejecutar:
+
+```powershell
+php -d memory_limit=512M .\artisan mapa:importar '.\storage\app\private\merida-source\merida.osm.json' --boundary=5961522 --no-interaction
+```
+
+Esperar el mensaje **«Importación activada»** y sus conteos antes de recargar la página. Si falla, conservar el mensaje para diagnosticarlo; no instalar los fixtures de pruebas como sustituto. Este comando funciona sin internet una vez que el archivo fuente válido está disponible localmente.
+
 El archivo debe incluir los nodos y ways referenciados por calles, parques y límite municipal. El importador valida referencias, sentidos y geometrías; activa el conjunto únicamente al terminar correctamente y conserva la versión anterior. La fecha de la fuente y la importación son distintas. Los archivos generados quedan en `storage/app/private/merida/versions/`, con un puntero `merida/active.json`.
 
 Las calles se recortan al polígono municipal. Un parque que cruza el límite conserva su geometría real como referencia visual, pero solo entra al catálogo si tiene una parte dentro del municipio, y su punto de conexión queda dentro de él. Esto no habilita rutas fuera de Mérida.

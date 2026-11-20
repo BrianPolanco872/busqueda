@@ -5,7 +5,7 @@ type: plan
 
 - Tipo: feature.
 - Objetivo: Visualizar BFS y DFS en una sola Home de Laravel Blade sobre un mismo grafo dirigido de calles reales del municipio de Mérida, con funcionamiento íntegro en localhost sin internet después de la instalación e importación inicial.
-- Estado: PARCIAL — código y pruebas previas al tag aplicados; pendiente tag válido, build autorizado, extracto municipal real y aceptación en navegador sin internet. No cerrar como IMPLEMENTADO hasta completar esas verificaciones.
+- Estado: PARCIAL — código, tag válido, build y prueba de assets completados; pendiente obtener/importar el extracto municipal real y aceptar el flujo de parques/BFS/DFS en navegador con Wi-Fi apagado. No cerrar como IMPLEMENTADO hasta completar esas verificaciones.
 - Fecha: 2026-11-19.
 - Importancia: Alta; funcionamiento offline es un criterio obligatorio, no una mejora opcional.
 
@@ -176,3 +176,19 @@ type: plan
 - Fuente real: descarga no obtenida; Overpass devolvió HTTP 406 o timeout. README incluye consulta reproducible para relación municipal 5961522. Los fixtures sintéticos permanecen exclusivamente en tests/ y almacenamiento fake, nunca como datos reales de la aplicación.
 - Git: HEAD e0608efae90c664137128fdfc9fb2dfcfa71100f sigue siendo el commit inicial; no tiene versión 0.1.0 ni esta implementación. No hay tag en HEAD y no existe aún un hash de commit que identifique los cambios de esta entrega. No se ejecutaron operaciones que modifiquen historial.
 - Desviaciones del plan original: ampliación de build.sh/versión/pruebas explícitamente aprobada por el usuario; helper MapGeometry necesario y anunciado; pruebas JS nativas y prueba de assets añadidas al alcance de Testing autorizado, sin librerías adicionales. Boost generó sus archivos de configuración/skills en la preparación exigida por AGENTS.md. Pendientes de aceptación registrados, no ocultados como éxito.
+
+## Build y reintento de importación — 2026-11-20
+
+- Autorización actual: el usuario confirmó creación/subida de v0.1.0 y solicitó build.sh, prueba de recursos compilados, reintento de fuente real y, tras importar, prueba de parque/origen/BFS/DFS con Wi-Fi apagado y caché vacía.
+- Verificación local previa: package.json y package-lock.json versión 0.1.0; v0.1.0 apunta a HEAD 82524affb64b6ec853461b8a1102c665274c42d0; no había cambios en el workspace. No se alteró historial Git ni se asumió verificación del remoto.
+- Build ejecutado exclusivamente mediante Git Bash y build.sh, sin argumentos de versión porque el script la lee del package.json. Vite 8.3.8 finalizó correctamente y generó JS, CSS, imágenes Leaflet, manifest.json y release.json en public/build/.
+- Sello de artefactos: versión 0.1.0; commit 82524affb64b6ec853461b8a1102c665274c42d0; built_at 2026-11-20T06:33:06.745Z; SHA256 del manifiesto a426f5c058184e462e62ed0abb77c1ca0f52d9d8c5e8db3b17e32c349a51f972.
+- Prueba antes omitida: CompiledAssetsTest aprobada, 1 prueba y 30 aserciones. Suite completa: 79 PHP correctas, 619 aserciones, cero omisiones. JavaScript: 4 pruebas correctas.
+- Navegador: smoke real con Microsoft Edge headless en perfil temporal nuevo, caché vaciada y deshabilitada, con interceptación que permite solo solicitudes locales. HTML, dos CSS, JS y favicon cargados desde localhost; Leaflet inicializado; ninguna solicitud externa de la página y ninguna excepción JS. Pantalla de datos ausentes y botón deshabilitado correctos.
+- Límite de la evidencia del navegador: no se apagó físicamente Wi-Fi, no se importó fuente municipal y NO se buscaron parques reales ni se aceptó el flujo BFS/DFS sobre datos reales. La política de bloqueo externo en esta prueba no se presenta como sustituto de la aceptación física offline solicitada.
+- Evidencia temporal: C:/Users/Administrador/AppData/Local/Temp/opencode/merida-compiled-browser-smoke-result.json. El primer intento CDP tuvo timeout de navegación; el segundo, con preflight HTTP local 200, pasó. Los procesos PHP/Edge creados para la prueba se cerraron. No se instalaron dependencias de navegador ni se modificaron fuentes de aplicación.
+- Reintento real: overpass.kumi.systems POST agotó 120 s (curl 28, HTTP 000, cero bytes); overpass.private.coffee GET agotó 120 s (curl 28, HTTP 000, cero bytes); overpass-api.de GET respondió HTTP 502, 534 bytes, «All query workers are busy and the request queue is full.»
+- No se creó merida.osm.json con respuestas inválidas ni se activó ningún dataset. La consulta municipal completa para relación 5961522 sigue en README y en el directorio temporal; no se recortó al centro ni se usaron fixtures como cartografía real.
+- README ampliado con formato requerido (Overpass JSON elements node/way/relation, sin error remark, referencias completas), ruta Windows y comando PowerShell exacto de importación local sin internet una vez obtenido el archivo.
+- Cambios de aplicación en esta continuación: ninguno. Cambios documentales: README y memoria de avance. Artefactos de build generados localmente, sin tocar fuentes del tag.
+- Pendiente actual: recibir/obtener JSON real en storage/app/private/merida-source/merida.osm.json, ejecutar importación con --boundary=5961522 y verificar después navegador con datos reales, caché vacía y Wi-Fi físicamente apagado; medir rendimiento municipal.

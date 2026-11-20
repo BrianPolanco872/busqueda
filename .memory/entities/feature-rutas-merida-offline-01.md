@@ -13,7 +13,8 @@ type: feature
 - Referencia visual: Imagen del usuario; panel compacto izquierdo, mapa de aproximadamente dos tercios del ancho y comparación debajo del mapa, sin dashboard ni navegación lateral.
 - Prioridad de requisitos: Los mensajes posteriores reemplazan la maqueta simulada, el tiempo estimado de recorrido y cualquier dependencia de mapas externos. No inventar resultados ni garantizar que BFS y DFS produzcan rutas diferentes.
 - Fuente propuesta: Extracto local de OpenStreetMap, con atribución, fecha y límite municipal verificado; cobertura sujeta a los datos importados.
-- Estado: EN IMPLEMENTACIÓN — código y preparación anteriores al tag aplicados en fix-rutas-merida-offline-01; pendiente tag/build, importación municipal real y aceptación completa offline. No validado aún como entrega terminada.
+- Estado: EN IMPLEMENTACIÓN — código, tag v0.1.0, build y pruebas de assets completados en fix-rutas-merida-offline-01; pendiente importación municipal real y aceptación completa offline. No validado aún como entrega terminada.
 - Implementación registrada en: fix-rutas-merida-offline-01.
-- Pruebas autorizadas: 78 PHP correctas (589 aserciones), 4 JavaScript correctas; 1 prueba de assets omitida por build/tag pendiente.
+- Pruebas autorizadas actuales: 79 PHP correctas (619 aserciones, cero omisiones) y 4 JavaScript correctas. Smoke real Edge con perfil limpio y caché vacía: assets locales y estado sin datos correctos; no sustituye pruebas con parques reales/Wi-Fi físicamente apagado.
+- Bloqueo de datos actual: reintentos con dos timeouts y HTTP 502 de saturación; ningún extracto real importado. README contiene formato, ubicación y comando Windows para aportar el archivo.
 - Última actualización: 2026-11-20.

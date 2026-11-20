@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Services\GraphSearch;
 use App\Services\MapGeometry;
+use App\Services\MeridaMapData;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
@@ -170,6 +172,55 @@ class ImportMeridaMapTest extends TestCase
         ];
     }
 
+    public function test_keeps_reversible_geometry_but_excludes_and_counts_its_segments_from_the_static_graph(): void
+    {
+        Storage::fake('local');
+        $extract = $this->fixture();
+        foreach ($extract['elements'] as &$element) {
+            if ($element['type'] === 'way' && in_array($element['id'], [103, 104, 110], true)) {
+                $element['tags']['oneway'] = 'reversible';
+            }
+        }
+        unset($element);
+
+        $this->artisan('mapa:importar', ['archivo' => $this->writeExtract($extract), '--boundary' => '9000'])
+            ->expectsOutputToContain('Tramos reversibles excluidos del grafo: 4.')
+            ->assertSuccessful();
+
+        $map = new MeridaMapData;
+        $streets = array_column($map->map($map->metadata()['bounds'])['streets']['features'], null, 'id');
+        $this->assertSame([[-89.635, 20.97], [-89.638, 20.985], [-89.625, 20.97]], $streets['way/103:0']['geometry']['coordinates']);
+        $this->assertSame([[-89.625, 20.97], [-89.62, 20.97]], $streets['way/104:0']['geometry']['coordinates']);
+        $this->assertSame([[-89.62, 20.99], [-89.613, 20.99]], $streets['way/110:0']['geometry']['coordinates']);
+        $this->assertSame([[-89.607, 20.99], [-89.602, 20.99]], $streets['way/110:1']['geometry']['coordinates']);
+
+        $graph = $map->graph();
+        foreach (['way/103:0', 'way/104:0', 'way/110:0', 'way/110:1'] as $segment) {
+            $this->assertSame('reversible', $streets[$segment]['properties']['oneway']);
+            $this->assertArrayNotHasKey($segment.':f', $graph['edges']);
+            $this->assertArrayNotHasKey($segment.':r', $graph['edges']);
+            foreach ($graph['adjacency'] as $edges) {
+                $this->assertNotContains($segment.':f', $edges);
+                $this->assertNotContains($segment.':r', $edges);
+            }
+        }
+        foreach (['15', '16', 'clip:110:1:0:b', 'clip:110:1:1:a'] as $node) {
+            $this->assertArrayNotHasKey($node, $graph['nodes']);
+            $this->assertArrayNotHasKey($node, $graph['adjacency']);
+        }
+        $this->assertArrayHasKey('way/100:0:f', $graph['edges']);
+        $this->assertArrayHasKey('way/100:0:r', $graph['edges']);
+        $this->assertArrayHasKey('way/105:0:r', $graph['edges']);
+        $this->assertArrayNotHasKey('way/105:0:f', $graph['edges']);
+        $this->assertArrayHasKey('way/106:0:f', $graph['edges']);
+        $this->assertArrayNotHasKey('way/106:0:r', $graph['edges']);
+        $this->assertSame(['nodes' => 13, 'edges' => 16, 'streets' => 13, 'parks' => 3], $map->metadata()['counts']);
+        foreach (['bfs', 'dfs'] as $method) {
+            $result = (new GraphSearch)->run($graph, '3', '6', $method);
+            $this->assertSame('unreachable', $result['status']);
+        }
+    }
+
     public function test_rejects_incomplete_references_without_replacing_or_deleting_the_active_snapshot(): void
     {
         Storage::fake('local');
@@ -212,7 +263,7 @@ class ImportMeridaMapTest extends TestCase
                 $element['nodes'] = [900, 903, 907];
             }
             if ($element['type'] === 'way' && $element['id'] === 104 && $case === 'oneway') {
-                $element['tags']['oneway'] = 'reversible';
+                $element['tags']['oneway'] = 'unknown';
             }
         }
         unset($element);

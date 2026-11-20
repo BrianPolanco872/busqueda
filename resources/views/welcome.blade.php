@@ -95,6 +95,8 @@
                         </div>
                         <div class="map-legend" aria-label="Leyenda del mapa">
                             <span><i class="legend-park" aria-hidden="true"></i> Parque</span>
+                            <span><i class="legend-selected-park" aria-hidden="true"></i> Parque elegido</span>
+                            <span><i class="legend-arrived-park" aria-hidden="true"></i> Destino alcanzado</span>
                             <span><i class="legend-street" aria-hidden="true"></i> Calle → sentido</span>
                             <span><i class="legend-bfs" aria-hidden="true"></i> BFS</span>
                             <span><i class="legend-dfs" aria-hidden="true"></i> DFS</span>
@@ -109,6 +111,16 @@
                             <button id="next-step" class="button button-small" type="button" disabled>Siguiente paso →</button>
                             <button id="finish" class="button button-small" type="button" disabled>Ver final</button>
                         </div>
+                        <label class="playback-speed" for="playback-speed">Velocidad
+                            <select id="playback-speed" aria-describedby="playback-help">
+                                <option value="0.5">0.5× · Lenta</option>
+                                <option value="1" selected>1× · Normal</option>
+                                <option value="2">2× · Rápida</option>
+                                <option value="4">4× · Muy rápida</option>
+                            </select>
+                        </label>
+                        <button id="sound-toggle" class="button button-small" type="button" aria-pressed="true">Sonido: activado</button>
+                        <p id="playback-help" class="help">La velocidad solo cambia la animación, no las métricas. El sonido comienza al reproducir o avanzar un paso.</p>
                         <p id="playback-counter" role="status" aria-live="polite">Sin recorrido · Paso 0 de 0</p>
                         <p id="current-node" class="help">Nodo actual: —</p>
                     </div>

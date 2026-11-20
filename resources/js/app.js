@@ -10,6 +10,7 @@ if (configElement) {
 function initializeMap(config) {
     const element = (id) => document.getElementById(id);
     const colors = { bfs: '#246bb2', dfs: '#b85a20' };
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
     const requests = {};
     const state = {
         available: Boolean(config.metadata && !config.error),
@@ -23,6 +24,7 @@ function initializeMap(config) {
         timer: null,
         parkTimer: null,
         mapTimer: null,
+        sound: Boolean(AudioContext),
     };
     const map = L.map('map', {
         preferCanvas: true,
@@ -38,6 +40,9 @@ function initializeMap(config) {
     const visitLayer = L.layerGroup().addTo(map);
     const endpointLayer = L.layerGroup().addTo(map);
     let visibleData = null;
+    let parksLayer = null;
+    let audioContext = null;
+    let activeTone = null;
 
     function message(text, error = false) {
         element('app-status').textContent = text;
@@ -141,6 +146,59 @@ function initializeMap(config) {
     function stopPlayback() {
         clearTimeout(state.timer);
         state.timer = null;
+        activeTone?.stop();
+        activeTone = null;
+    }
+
+    function updateSoundControl() {
+        element('sound-toggle').disabled = !AudioContext;
+        element('sound-toggle').setAttribute('aria-pressed', String(state.sound));
+        element('sound-toggle').textContent = !AudioContext ? 'Sonido no disponible' : state.sound ? 'Sonido: activado' : 'Sonido: desactivado';
+    }
+
+    function audioUnavailable() {
+        state.sound = false;
+        updateSoundControl();
+        message('No se pudo activar el sonido. Puedes seguir la animación sin audio.', true);
+    }
+
+    function prepareAudio() {
+        if (!state.sound) {
+            return;
+        }
+        try {
+            audioContext ??= new AudioContext();
+            audioContext.resume().catch(audioUnavailable);
+        } catch {
+            audioUnavailable();
+        }
+    }
+
+    function playTraceSound(kind, arrived = false) {
+        if (!state.sound || audioContext?.state !== 'running') {
+            return;
+        }
+        activeTone?.stop();
+        const tone = audioContext.createOscillator();
+        const volume = audioContext.createGain();
+        const start = audioContext.currentTime;
+        const duration = arrived ? .18 : .04;
+        tone.frequency.value = arrived ? 880 : (state.active === 'bfs' ? 520 : 390) * (kind === 'visit' ? 1 : .5);
+        volume.gain.setValueAtTime(0, start);
+        volume.gain.linearRampToValueAtTime(.035, start + .005);
+        volume.gain.exponentialRampToValueAtTime(.001, start + duration);
+        tone.connect(volume);
+        volume.connect(audioContext.destination);
+        tone.onended = () => {
+            tone.disconnect();
+            volume.disconnect();
+            if (activeTone === tone) {
+                activeTone = null;
+            }
+        };
+        tone.start(start);
+        tone.stop(start + duration);
+        activeTone = tone;
     }
 
     function invalidateResults() {
@@ -208,6 +266,7 @@ function initializeMap(config) {
 
     function drawEndpoints() {
         endpointLayer.clearLayers();
+        parksLayer?.setStyle(parkStyle);
         if (state.origin) {
             drawConnection(state.origin, 'A');
         }
@@ -352,11 +411,9 @@ function initializeMap(config) {
             style: { color: '#bec5b8', weight: map.getZoom() >= 16 ? 3 : 1.5, opacity: .85, interactive: false },
         }).addTo(baseLayer);
         let parkLabels = 0;
-        L.geoJSON(visibleData.parks, {
-            style: { color: '#8fb473', weight: 1.5, fillColor: '#d6e7c1', fillOpacity: .85, bubblingMouseEvents: false },
-            pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
-                radius: 6, color: '#759f5b', weight: 1.5, fillColor: '#c8dfa8', fillOpacity: 1, bubblingMouseEvents: false,
-            }),
+        parksLayer = L.geoJSON(visibleData.parks, {
+            style: parkStyle,
+            pointToLayer: (feature, latlng) => L.circleMarker(latlng, parkStyle(feature)),
             onEachFeature: (feature, layer) => {
                 const name = document.createElement('span');
                 name.textContent = feature.properties.name;
@@ -381,6 +438,17 @@ function initializeMap(config) {
         drawStreetDetails();
     }
 
+    function parkStyle(feature) {
+        const selected = (feature.properties.id ?? feature.id) === state.destination?.id;
+        const result = state.response?.results[state.active];
+        const arrived = selected && result?.status === 'found' && state.playback[state.active]?.cursor === result.trace.length;
+        return {
+            color: arrived ? '#b45309' : selected ? '#7c3aed' : '#8fb473',
+            fillColor: arrived ? '#fde68a' : selected ? '#ddd6fe' : '#d6e7c1',
+            weight: selected ? 3 : 1.5, fillOpacity: .85, radius: selected ? 9 : 6, bubblingMouseEvents: false,
+        };
+    }
+
     function drawStreetDetails() {
         const zoom = map.getZoom();
         if (zoom < 16 || !visibleData) {
@@ -397,7 +465,7 @@ function initializeMap(config) {
             const start = map.latLngToContainerPoint(toLatLng(coordinates[middle]));
             const end = map.latLngToContainerPoint(toLatLng(coordinates[middle + 1]));
             const center = map.containerPointToLatLng(start.add(end).divideBy(2));
-            if (bounds.contains(center) && arrows < 100) {
+            if (feature.properties.oneway !== 'reversible' && bounds.contains(center) && arrows < 100) {
                 const arrow = document.createElement('span');
                 arrow.textContent = feature.properties.oneway === 0 ? '↔' : '→';
                 const angle = Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI;
@@ -416,7 +484,7 @@ function initializeMap(config) {
                 names.add(name);
                 labels++;
             }
-            if (zoom < 17) {
+            if (zoom < 17 || feature.properties.oneway === 'reversible') {
                 continue;
             }
             for (const [id, coordinate] of [[feature.properties.from, coordinates[0]], [feature.properties.to, coordinates.at(-1)]]) {
@@ -569,6 +637,7 @@ function initializeMap(config) {
 
     function drawFinalRoute() {
         finalRouteLayer.clearLayers();
+        parksLayer?.setStyle(parkStyle);
         const result = state.response?.results[state.active];
         const playback = state.playback[state.active];
         if (result?.status === 'found' && playback.cursor === result.trace.length) {
@@ -656,12 +725,14 @@ function initializeMap(config) {
             updatePlayback();
             return;
         }
+        const [kind] = result.trace[playback.cursor];
         applyTraceEvent(result.trace[playback.cursor], playback);
         playback.cursor++;
         if (playback.cursor === result.trace.length) {
             stopPlayback();
             drawFinalRoute();
         }
+        playTraceSound(kind, playback.cursor === result.trace.length && result.status === 'found');
         drawVisitNumbers();
         updatePlayback();
     }
@@ -676,7 +747,7 @@ function initializeMap(config) {
             state.timer = null;
             advance();
             play();
-        }, 180);
+        }, 180 / Number(element('playback-speed').value || 1));
         updatePlayback();
     }
 
@@ -783,12 +854,29 @@ function initializeMap(config) {
             stopPlayback();
             updatePlayback();
         } else {
+            prepareAudio();
             play();
         }
     });
     element('next-step').addEventListener('click', () => {
+        prepareAudio();
         stopPlayback();
         advance();
+    });
+    element('playback-speed').addEventListener('change', () => {
+        if (state.timer) {
+            stopPlayback();
+            play();
+        }
+    });
+    element('sound-toggle').addEventListener('click', () => {
+        state.sound = !state.sound;
+        activeTone?.stop();
+        activeTone = null;
+        if (state.sound) {
+            prepareAudio();
+        }
+        updateSoundControl();
     });
     element('finish').addEventListener('click', () => {
         stopPlayback();
@@ -798,6 +886,8 @@ function initializeMap(config) {
     });
     window.addEventListener('pagehide', () => {
         stopPlayback();
+        audioContext?.close().catch(() => {});
+        audioContext = null;
         clearTimeout(state.parkTimer);
         clearTimeout(state.mapTimer);
         for (const name of Object.keys(requests)) {
@@ -807,6 +897,7 @@ function initializeMap(config) {
 
     updateControls();
     updatePlayback();
+    updateSoundControl();
     if (state.available) {
         const [west, south, east, north] = config.metadata.bounds;
         const bounds = L.latLngBounds([south, west], [north, east]);

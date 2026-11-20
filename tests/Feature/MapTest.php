@@ -14,7 +14,9 @@ class MapTest extends TestCase
         $this->withoutVite();
 
         $this->get('/')->assertOk()->assertSee('Rutas entre parques de Mérida')
-            ->assertSee('mapa:importar')->assertDontSee('tile.openstreetmap.org');
+            ->assertSee('mapa:importar')->assertDontSee('tile.openstreetmap.org')
+            ->assertSee('for="playback-speed"', false)->assertSee('id="playback-speed"', false)
+            ->assertSee('id="sound-toggle"', false)->assertSee('Parque elegido')->assertSee('Destino alcanzado');
     }
 
     public function test_parks_are_searched_locally_without_accents_or_external_requests(): void

@@ -124,6 +124,8 @@ class ImportMeridaMap extends Command
             } else {
                 $this->line("Fecha de la fuente OSM: {$sourceDate}.");
             }
+            $reversibleSegments = count(array_filter($streets, static fn (array $street): bool => $street['properties']['oneway'] === 'reversible'));
+            $this->line("Tramos reversibles excluidos del grafo: {$reversibleSegments}. Se conserva su geometría en el mapa.");
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
@@ -428,18 +430,19 @@ class ImportMeridaMap extends Command
         return [$graph, $features];
     }
 
-    private function oneway(array $tags): int
+    private function oneway(array $tags): int|string
     {
         return match ($tags['oneway'] ?? null) {
             'yes', '1', 'true' => 1,
             '-1' => -1,
             'no', '0', 'false' => 0,
+            'reversible' => 'reversible',
             null => ($tags['junction'] ?? null) === 'roundabout' || in_array($tags['highway'] ?? '', ['motorway', 'motorway_link'], true) ? 1 : 0,
             default => throw new RuntimeException('Valor oneway no admitido: '.$tags['oneway'].'. No se asumió doble sentido.'),
         };
     }
 
-    private function addSegment(array &$graph, array &$features, array $points, string $segment, string $name, int $oneway): void
+    private function addSegment(array &$graph, array &$features, array $points, string $segment, string $name, int|string $oneway): void
     {
         $from = (string) $points[0]['id'];
         $to = (string) $points[array_key_last($points)]['id'];
@@ -450,6 +453,11 @@ class ImportMeridaMap extends Command
         }
         if ($distance <= 0) {
             throw new RuntimeException('Calle con longitud cero: '.$segment.'.');
+        }
+        $geometry = ['type' => 'LineString', 'coordinates' => $coordinates];
+        $features[] = ['type' => 'Feature', 'id' => $segment, 'properties' => ['id' => $segment, 'name' => $name, 'from' => $from, 'to' => $to, 'oneway' => $oneway], 'geometry' => $geometry, 'bbox' => MapGeometry::bounds($geometry)];
+        if ($oneway === 'reversible') {
+            return;
         }
         foreach ([$points[0], $points[array_key_last($points)]] as $endpoint) {
             $graph['nodes'][$endpoint['id']] = $endpoint['point'];
@@ -463,8 +471,6 @@ class ImportMeridaMap extends Command
             $graph['edges'][$id] = ['from' => $a, 'to' => $b, 'distance_m' => $distance, 'name' => $name, 'segment' => $segment];
             $graph['adjacency'][$a][] = $id;
         }
-        $geometry = ['type' => 'LineString', 'coordinates' => $coordinates];
-        $features[] = ['type' => 'Feature', 'id' => $segment, 'properties' => ['id' => $segment, 'name' => $name, 'from' => $from, 'to' => $to, 'oneway' => $oneway], 'geometry' => $geometry, 'bbox' => MapGeometry::bounds($geometry)];
     }
 
     /** @return list<array> */

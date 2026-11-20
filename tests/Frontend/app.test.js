@@ -7,7 +7,7 @@ const source = readFileSync(new URL('../../resources/js/app.js', import.meta.url
     .replace(/^import .*;\r?\n/gm, '');
 
 // Exercise the actual UI event handlers without a browser or a network service.
-function application({ ready = true } = {}) {
+function application({ ready = true, audio = true, blockedAudio = false } = {}) {
     class Element {
         constructor(tag = 'div') {
             this.tag = tag;
@@ -44,6 +44,7 @@ function application({ ready = true } = {}) {
     const metadata = { version: 'test', bounds: [-89.64, 20.96, -89.60, 21.0] };
     const urls = Object.fromEntries(['parks', 'map', 'origin', 'search'].map(name => [name, `http://localhost/${name}`]));
     element('map-config').textContent = JSON.stringify({ metadata: ready ? metadata : null, error: ready ? null : 'No hay datos locales.', urls });
+    element('playback-speed').value = '1';
     const radios = ['bfs', 'dfs', 'both'].map(value => Object.assign(new Element(), { value }));
     let method = 'both';
     for (const radio of radios) {
@@ -67,7 +68,8 @@ function application({ ready = true } = {}) {
         setView() { return this; }, fitBounds() { return this; }, setMaxBounds() {}, setMinZoom() {},
         getZoom: () => 15, getBounds: () => bounds, getCenter: () => ({ lat: 20.97, lng: -89.62 }),
         on(name, callback) { this.events[name] = callback; },
-        latLngToContainerPoint: () => ({ x: 20, y: 20 }),
+        latLngToContainerPoint: () => ({ x: 20, y: 20, add() { return this; }, divideBy() { return this; } }),
+        containerPointToLatLng: () => ({ lat: 20.97, lng: -89.62 }),
     };
     const layers = [];
     const shape = options => ({
@@ -79,14 +81,54 @@ function application({ ready = true } = {}) {
         map: () => map,
         layerGroup: () => { const layer = shape(); layers.push(layer); return layer; },
         latLngBounds: () => bounds,
-        geoJSON: () => shape(), circleMarker: (_point, options) => shape(options),
+        geoJSON: (data, options = {}) => {
+            const layer = shape({ data, ...options });
+            layer.setStyle = style => {
+                layer.styles = (data.features ?? []).map(feature => style(feature));
+                return layer;
+            };
+            if (typeof options.style === 'function') layer.setStyle(options.style);
+            return layer;
+        },
+        circleMarker: (_point, options) => shape(options),
         marker: (_point, options) => shape(options), divIcon: options => options,
         polyline: (_points, options) => shape(options),
     };
     let timerId = 0;
     const timers = new Map();
-    const setTimer = callback => { timers.set(++timerId, callback); return timerId; };
+    const setTimer = (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; };
     const clearTimer = id => timers.delete(id);
+    const tones = [];
+    const audioContexts = [];
+    class AudioContext {
+        constructor() {
+            if (blockedAudio === 'constructor') throw new Error('Audio unavailable');
+            this.currentTime = 0;
+            this.state = 'running';
+            this.destination = {};
+            audioContexts.push(this);
+        }
+        resume() {
+            if (blockedAudio) {
+                this.state = 'suspended';
+                return Promise.reject(new Error('Audio blocked'));
+            }
+            return Promise.resolve();
+        }
+        close() { this.state = 'closed'; return Promise.resolve(); }
+        createOscillator() {
+            const tone = {
+                frequency: { value: 0 }, stops: [],
+                connect() {}, disconnect() { this.disconnected = true; },
+                start() { tones.push(this); }, stop(time) { this.stops.push(time); },
+            };
+            return tone;
+        }
+        createGain() {
+            return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} };
+        }
+    }
+    const windowEvents = {};
     const connection = { node_id: 'A', coordinates: [-89.62, 20.97], selected: [-89.62, 20.97], offset_m: 0, approximate: false };
     const result = { status: 'found', route_nodes: ['A', 'B'], route_edges: ['ab'], visited_nodes: ['A', 'B'], trace: [['visit', 'A'], ['edge', 'ab'], ['visit', 'B']], metrics: { visited_nodes: 2, segments: 1, distance_m: 100, search_ms: 0.25 } };
     const searchResult = {
@@ -105,7 +147,11 @@ function application({ ready = true } = {}) {
     const context = vm.createContext({
         L, document, URL, AbortController, Intl,
         setTimeout: setTimer, clearTimeout: clearTimer,
-        window: { location: { href: 'http://localhost/' }, matchMedia: () => ({ matches: false }), setTimeout: setTimer, addEventListener() {} },
+        window: {
+            location: { href: 'http://localhost/' }, matchMedia: () => ({ matches: false }),
+            setTimeout: setTimer, addEventListener(name, callback) { windowEvents[name] = callback; },
+            AudioContext: audio ? AudioContext : undefined,
+        },
         fetch: async (url, options) => {
             assert.equal(url.origin, 'http://localhost');
             const name = url.pathname.slice(1);
@@ -116,8 +162,8 @@ function application({ ready = true } = {}) {
     });
     vm.runInContext(source, context);
     return {
-        element, radios, map, layers, calls, handlers, searchResult, context,
-        tick() { const next = timers.entries().next().value; if (next) { timers.delete(next[0]); next[1](); } },
+        element, radios, map, layers, calls, handlers, searchResult, context, timers, tones, audioContexts, windowEvents,
+        tick() { const next = timers.entries().next().value; if (next) { timers.delete(next[0]); next[1].callback(); } },
     };
 }
 
@@ -139,6 +185,30 @@ test('formatting compares and displays the same one-metre precision', () => {
     assert.equal(vm.runInContext('formatDistance(1001.4)', app.context), '1.001 km');
     assert.equal(app.calls.length, 0);
     assert.equal(app.element('visualize').disabled, true);
+});
+
+test('reversible streets keep their map geometry without fixed arrows or graph node markers', async () => {
+    const app = application();
+    await settle();
+    app.map.getZoom = () => 17;
+    const streets = {
+        features: ['reversible', 0, 1, -1].map((oneway, index) => ({
+            properties: { oneway, name: '', from: `${index}:a`, to: `${index}:b` },
+            geometry: { type: 'LineString', coordinates: [[-89.62, 20.97], [-89.619, 20.97]] },
+        })),
+    };
+    app.handlers.map = () => ({ version: 'test', boundary: {}, streets, parks: { features: [] } });
+
+    app.map.events.moveend();
+    app.tick();
+    await settle();
+
+    assert.equal(app.layers[0].shapes[1].options.data, streets);
+    const decorations = app.layers[1].shapes;
+    const arrows = decorations.filter(shape => shape.options.icon);
+    assert.deepEqual(arrows.map(shape => shape.options.icon.html.textContent), ['↔', '→', '→']);
+    assert.equal(arrows[2].options.icon.html.style.transform, 'rotate(180deg)');
+    assert.equal(decorations.filter(shape => shape.options.radius === 2.5).length, 6);
 });
 
 test('local selection, CSRF, steps, method switching and reset use the actual UI handlers', async () => {
@@ -208,4 +278,140 @@ test('DFS shows the parent intersection when exploration resumes after backtrack
     app.element('next-step').emit('click');
     assert.match(app.element('current-node').textContent, /Nodo actual: A/);
     assert.match(app.element('current-node').textContent, /2 visitas reproducidas/);
+});
+
+test('the selected park changes colour, arrival follows the active trace, and reset clears the highlight', async () => {
+    const app = application();
+    await settle();
+    const parks = { features: [
+        { id: 'way/1', properties: { name: 'Parque de prueba' }, geometry: { type: 'Polygon' } },
+        { id: 'node/2', properties: { name: 'Otro parque' }, geometry: { type: 'Point' } },
+    ] };
+    app.handlers.map = () => ({ version: 'test', boundary: {}, streets: { features: [] }, parks });
+    app.map.events.moveend();
+    app.tick();
+    await settle();
+    const parkLayer = app.layers[0].shapes[2];
+    assert.equal(parkLayer.styles[0].color, '#8fb473');
+
+    await selectExtremes(app);
+    assert.equal(parkLayer.styles[0].color, '#7c3aed');
+    assert.equal(parkLayer.styles[1].color, '#8fb473');
+    const point = parkLayer.options.pointToLayer({ ...parks.features[1], id: 'way/1' }, [20.97, -89.62]);
+    assert.equal(point.options.color, '#7c3aed');
+    assert.equal(point.options.radius, 9);
+    await app.element('route-controls').emit('submit');
+    app.element('finish').emit('click');
+    assert.equal(parkLayer.styles[0].color, '#b45309');
+    app.element('view-dfs').emit('click');
+    assert.equal(parkLayer.styles[0].color, '#7c3aed');
+    for (let index = 0; index < 3; index++) app.element('next-step').emit('click');
+    assert.equal(parkLayer.styles[0].color, '#b45309');
+    app.element('park-query').emit('input');
+    assert.equal(parkLayer.styles[0].color, '#8fb473');
+    app.element('reset').emit('click');
+    assert.equal(parkLayer.styles[0].color, '#8fb473');
+});
+
+test('an unreachable park never gets the arrival colour or arrival sound', async () => {
+    const app = application();
+    await settle();
+    await selectExtremes(app);
+    app.searchResult.results = { bfs: {
+        status: 'unreachable', route_nodes: [], route_edges: [], visited_nodes: ['A'], trace: [['visit', 'A']],
+        metrics: { visited_nodes: 1, segments: null, distance_m: null, search_ms: 0.25 },
+    } };
+    app.handlers.map = () => ({ version: 'test', boundary: {}, streets: { features: [] }, parks: { features: [{ id: 'way/1', properties: {} }] } });
+    app.map.events.moveend();
+    app.tick();
+    await settle();
+
+    await app.element('route-controls').emit('submit');
+    app.element('next-step').emit('click');
+
+    assert.equal(app.layers[0].shapes[2].styles[0].color, '#7c3aed');
+    assert.equal(app.tones.length, 1);
+    assert.equal(app.tones[0].frequency.value, 520);
+    assert.match(app.element('bfs-status').textContent, /inalcanzable/);
+});
+
+test('changing speed reschedules only active playback and leaves search metrics unchanged', async () => {
+    const app = application();
+    await settle();
+    await selectExtremes(app);
+    await app.element('route-controls').emit('submit');
+    const speed = app.element('playback-speed');
+    speed.value = '0.5';
+    speed.emit('change');
+    assert.equal(app.timers.size, 0);
+
+    app.element('play-pause').emit('click');
+    assert.equal([...app.timers.values()][0].delay, 360);
+    speed.value = '4';
+    speed.emit('change');
+    assert.equal(app.timers.size, 1);
+    assert.equal([...app.timers.values()][0].delay, 45);
+    app.tick();
+    assert.match(app.element('playback-counter').textContent, /Paso 1 de 3/);
+    app.element('play-pause').emit('click');
+    speed.value = '2';
+    speed.emit('change');
+    assert.equal(app.timers.size, 0);
+    app.element('play-pause').emit('click');
+    assert.equal([...app.timers.values()][0].delay, 90);
+    assert.equal(app.element('bfs-time').textContent, '0.25 ms');
+    assert.equal(app.element('bfs-distance').textContent, '100 m');
+    app.element('reset').emit('click');
+    assert.equal(app.timers.size, 0);
+});
+
+test('sound starts only on interaction, follows real steps, can be muted, and stops on pause or reset', async () => {
+    const app = application();
+    await settle();
+    await selectExtremes(app);
+    await app.element('route-controls').emit('submit');
+    assert.equal(app.audioContexts.length, 0);
+
+    app.element('play-pause').emit('click');
+    app.tick();
+    assert.equal(app.tones.length, 1);
+    assert.equal(app.tones[0].frequency.value, 520);
+    app.element('play-pause').emit('click');
+    assert.equal(app.tones[0].stops.at(-1), undefined);
+    app.tones[0].onended();
+    assert.equal(app.tones[0].disconnected, true);
+    app.element('sound-toggle').emit('click');
+    assert.equal(app.element('sound-toggle')['aria-pressed'], 'false');
+    app.element('next-step').emit('click');
+    assert.equal(app.tones.length, 1);
+    app.element('sound-toggle').emit('click');
+    app.element('next-step').emit('click');
+    assert.equal(app.tones[1].frequency.value, 880);
+    app.element('view-dfs').emit('click');
+    assert.equal(app.tones.length, 2);
+    app.element('next-step').emit('click');
+    assert.equal(app.tones[2].frequency.value, 390);
+    app.element('finish').emit('click');
+    assert.equal(app.tones.length, 3);
+    app.element('reset').emit('click');
+    assert.equal(app.tones[2].stops.at(-1), undefined);
+    app.windowEvents.pagehide();
+    assert.equal(app.audioContexts[0].state, 'closed');
+});
+
+test('animation still works when audio is unsupported or the browser rejects it', async () => {
+    for (const options of [{ audio: false }, { blockedAudio: true }, { blockedAudio: 'constructor' }]) {
+        const app = application(options);
+        await settle();
+        await selectExtremes(app);
+        await app.element('route-controls').emit('submit');
+
+        app.element('play-pause').emit('click');
+        await settle();
+        app.tick();
+
+        assert.match(app.element('playback-counter').textContent, /Paso 1 de 3/);
+        assert.equal(app.tones.length, 0);
+        assert.equal(app.element('sound-toggle')['aria-pressed'], 'false');
+    }
 });
